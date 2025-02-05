@@ -101,7 +101,7 @@ document.addEventListener("DOMContentLoaded", async function () {
       parsed = JSON.parse(lambdaResponse.body);
       console.log("Parsed uniqueness response:", parsed);
     } catch (e) {
-      throw new Error("Error processing uniqueness response.");
+      throw new Error("Channel ID is already linked to an account. If you think this is a mistake please contact an Admin.");
     }
     return parsed;
   }
