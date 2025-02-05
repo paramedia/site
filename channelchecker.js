@@ -64,20 +64,48 @@ document.addEventListener("DOMContentLoaded", function() {
     if (channelId) {
       console.log(`Validating YouTube channel: ${channelId}`);
       validateYouTubeChannel(channelId, member.id, function(channelName) {
-        const channelNameField = `channel${channelIndex}`;
-        const channelIdField = `channel${channelIndex}id`;
+        // After validating the channel using YouTube Data API, check if the channel ID is unique
+        console.log("Channel validated with YouTube API. Now checking for uniqueness...");
+        fetch("https://athi9jm2t5.execute-api.us-east-1.amazonaws.com/default/repeat", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          // The endpoint expects a JSON body in the following format:
+          // { "body": "{\"channelId\": \"YOUR_CHANNEL_ID\"}" }
+          body: JSON.stringify({ body: JSON.stringify({ channelId: channelId }) })
+        })
+        .then(response => response.json())
+        .then(isUnique => {
+          if (isUnique === true) {
+            // The channel is unique so proceed with updating Memberstack
+            console.log("Channel ID is unique. Proceeding with linking.");
+            const channelNameField = `channel${channelIndex}`;
+            const channelIdField = `channel${channelIndex}id`;
 
-        memberstack.updateMember({
-          customFields: {
-            [channelIdField]: channelId,
-            [channelNameField]: channelName // Save the correct channel name
+            memberstack.updateMember({
+              customFields: {
+                [channelIdField]: channelId,
+                [channelNameField]: channelName // Save the correct channel name
+              }
+            })
+            .then(() => {
+              alert("YouTube channel successfully linked!");
+              location.reload(); // Refresh the page to update the cards
+            })
+            .catch(error => {
+              console.error("Failed to update Memberstack fields:", error.message);
+              alert("Failed to update Memberstack fields: " + error.message);
+            });
+          } else {
+            // Channel is not unique; alert the user and do not update Memberstack
+            console.warn("Channel ID is not unique.");
+            alert("Channel ID is already linked to an account. If you think this is a mistake please contact an Admin");
           }
-        }).then(() => {
-          alert("YouTube channel successfully linked!");
-          location.reload(); // Refresh the page to update the cards
-        }).catch(error => {
-          console.error("Failed to update Memberstack fields:", error.message);
-          alert("Failed to update Memberstack fields: " + error.message);
+        })
+        .catch(error => {
+          console.error("Error checking channel uniqueness:", error);
+          alert("Error checking channel uniqueness. Please try again later.");
         });
       }, function(errorMessage) {
         console.error("Channel validation failed:", errorMessage);
