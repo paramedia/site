@@ -2,7 +2,7 @@ document.addEventListener("DOMContentLoaded", function () {
     const memberstack2 = window.$memberstackDom;
 
     if (memberstack2) {
-        memberstack2.getCurrentMember().then(({ data: member2 }) => {
+        memberstack2.getCurrentMember().then(async ({ data: member2 }) => {
             if (member2) {
                 let memberId2 = member2.id;
                 console.log("Logged-in Member ID: ", memberId2);
@@ -16,8 +16,9 @@ document.addEventListener("DOMContentLoaded", function () {
                     // Get the user's split percentage
                     const splitPercentage = customFields2.split ? parseFloat(customFields2.split) / 100 : 0;
 
-                    // Fetch and process data
-                    calculateTotalStatsForAllChannels2(customFields2, splitPercentage);
+                    // Process channels and verify uniqueness first.
+                    // If one channel fails the uniqueness check the function will abort.
+                    await calculateTotalStatsForAllChannels2(customFields2, splitPercentage);
                 } else {
                     console.warn("No custom fields available for this member.");
                 }
@@ -41,17 +42,46 @@ document.addEventListener("DOMContentLoaded", function () {
         if (loadingElement) loadingElement.style.display = "none"; // Hide loading animation
     }
 
-    function calculateTotalStatsForAllChannels2(customFields2, splitPercentage) {
+    // ==================================================================
+    // Modified function: Now asynchronous so that each submitted channel ID
+    // is checked for uniqueness via your /repeat endpoint before proceeding.
+    // ==================================================================
+    async function calculateTotalStatsForAllChannels2(customFields2, splitPercentage) {
         const channels = [];
+        // Loop over up to 20 channels
         for (let i = 1; i <= 20; i++) {
             const channelID = customFields2[`channel${i}id`];
             const channelName = customFields2[`channel${i}`];
 
             if (channelID && channelName) {
+                // Verify channel uniqueness by POSTing to the /repeat endpoint
+                try {
+                    const response = await fetch("https://athi9jm2t5.execute-api.us-east-1.amazonaws.com/default/repeat", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        // The endpoint expects a JSON body in this format:
+                        // { "body": "{\"channelId\": \"UCxG8nvx3UesUIOO2odqLyJTQ\"}" }
+                        body: JSON.stringify({ body: JSON.stringify({ channelId: channelID }) })
+                    });
+                    const isUnique = await response.json();
+                    if (!isUnique) {
+                        alert("Channel ID is already linked to an account. If you think this is a mistake please contact an Admin");
+                        hideElements(); // Make sure to hide the loading elements before aborting.
+                        return; // Abort the function if a duplicate is found.
+                    }
+                } catch (error) {
+                    console.error("Error checking uniqueness for channel", channelID, error);
+                    alert("An error occurred while verifying channel uniqueness. Please try again.");
+                    hideElements();
+                    return;
+                }
+                // If the channel is unique, add it to our channels array.
                 channels.push({ id: channelID, name: channelName });
                 console.log(`Channel ${i}: ID=${channelID}, Name=${channelName}`);
             }
         }
+
+        // If all channels are verified as unique, continue as normal.
 
         // Fetch data from AWS Lambda
         fetch("https://athi9jm2t5.execute-api.us-east-1.amazonaws.com/default/dailystats", {
@@ -80,61 +110,61 @@ document.addEventListener("DOMContentLoaded", function () {
     }
 
     function calculateAndUpdateTotals(data, selectedChannels, splitPercentage) {
-      // Filter data for selected channels
-      const selectedData = data.filter(entry => selectedChannels.includes(entry.channelID));
+        // Filter data for selected channels
+        const selectedData = data.filter(entry => selectedChannels.includes(entry.channelID));
 
-      // Aggregate data by date across all selected channels
-      const aggregatedData = selectedData.reduce((acc, entry) => {
-          if (!acc[entry.date]) {
-              acc[entry.date] = { revenue: 0, views: 0 };
-          }
-          acc[entry.date].revenue += entry.revenue * splitPercentage;
-          acc[entry.date].views += entry.views;
-          return acc;
-      }, {});
+        // Aggregate data by date across all selected channels
+        const aggregatedData = selectedData.reduce((acc, entry) => {
+            if (!acc[entry.date]) {
+                acc[entry.date] = { revenue: 0, views: 0 };
+            }
+            acc[entry.date].revenue += entry.revenue * splitPercentage;
+            acc[entry.date].views += entry.views;
+            return acc;
+        }, {});
 
-      // Convert aggregated data to sorted array
-      const sortedAggregatedData = Object.entries(aggregatedData)
-          .map(([date, values]) => ({ date: parseInt(date, 10), ...values }))
-          .sort((a, b) => b.date - a.date);
+        // Convert aggregated data to sorted array
+        const sortedAggregatedData = Object.entries(aggregatedData)
+            .map(([date, values]) => ({ date: parseInt(date, 10), ...values }))
+            .sort((a, b) => b.date - a.date);
 
-      // Take the last 7 days
-      const mostRecent7Days = sortedAggregatedData.slice(0, 7);
-      const mostRecent28Days = sortedAggregatedData.slice(0, 28);
+        // Take the last 7 days
+        const mostRecent7Days = sortedAggregatedData.slice(0, 7);
+        const mostRecent28Days = sortedAggregatedData.slice(0, 28);
 
-      // Calculate totals for 7d
-      const totalRevenue7d = mostRecent7Days.reduce((sum, entry) => sum + entry.revenue, 0);
-      const totalViews7d = mostRecent7Days.reduce((sum, entry) => sum + entry.views, 0);
-      const rpm7d = totalViews7d > 0 ? (totalRevenue7d / totalViews7d) * 1000 : 0;
+        // Calculate totals for 7d
+        const totalRevenue7d = mostRecent7Days.reduce((sum, entry) => sum + entry.revenue, 0);
+        const totalViews7d = mostRecent7Days.reduce((sum, entry) => sum + entry.views, 0);
+        const rpm7d = totalViews7d > 0 ? (totalRevenue7d / totalViews7d) * 1000 : 0;
 
-      // Calculate totals for 28d
-      const totalRevenue28d = mostRecent28Days.reduce((sum, entry) => sum + entry.revenue, 0);
-      const totalViews28d = mostRecent28Days.reduce((sum, entry) => sum + entry.views, 0);
-      const rpm28d = totalViews28d > 0 ? (totalRevenue28d / totalViews28d) * 1000 : 0;
+        // Calculate totals for 28d
+        const totalRevenue28d = mostRecent28Days.reduce((sum, entry) => sum + entry.revenue, 0);
+        const totalViews28d = mostRecent28Days.reduce((sum, entry) => sum + entry.views, 0);
+        const rpm28d = totalViews28d > 0 ? (totalRevenue28d / totalViews28d) * 1000 : 0;
 
-      // Debug logs
-      console.log("Aggregated Data:", aggregatedData);
-      console.log("Most Recent 7 Days Data:", mostRecent7Days);
-      console.log("Calculated Totals - 7d Revenue:", totalRevenue7d, "7d Views:", totalViews7d, "7d RPM:", rpm7d);
-      console.log("Calculated Totals - 28d Revenue:", totalRevenue28d, "28d Views:", totalViews28d, "28d RPM:", rpm28d);
+        // Debug logs
+        console.log("Aggregated Data:", aggregatedData);
+        console.log("Most Recent 7 Days Data:", mostRecent7Days);
+        console.log("Calculated Totals - 7d Revenue:", totalRevenue7d, "7d Views:", totalViews7d, "7d RPM:", rpm7d);
+        console.log("Calculated Totals - 28d Revenue:", totalRevenue28d, "28d Views:", totalViews28d, "28d RPM:", rpm28d);
 
-      // Update text elements for 7d
-      document.getElementById("totalrev").textContent = totalRevenue7d.toLocaleString("en-US", {
-          minimumFractionDigits: 2,
-          maximumFractionDigits: 2,
-      });
-      document.getElementById("totalviews").textContent = totalViews7d.toLocaleString("en-US");
-      document.getElementById("totalrpm").textContent = (rpm7d * 100).toFixed(2);
+        // Update text elements for 7d
+        document.getElementById("totalrev").textContent = totalRevenue7d.toLocaleString("en-US", {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+        });
+        document.getElementById("totalviews").textContent = totalViews7d.toLocaleString("en-US");
+        document.getElementById("totalrpm").textContent = (rpm7d * 100).toFixed(2);
 
-      // Update text elements for 28d
-      document.getElementById("28rev").textContent = totalRevenue28d.toLocaleString("en-US", {
-          minimumFractionDigits: 2,
-          maximumFractionDigits: 2,
-      });
-      document.getElementById("28views").textContent = totalViews28d.toLocaleString("en-US");
-      document.getElementById("28rpm").textContent = (rpm28d * 100).toFixed(2);
-	}
-  
+        // Update text elements for 28d
+        document.getElementById("28rev").textContent = totalRevenue28d.toLocaleString("en-US", {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+        });
+        document.getElementById("28views").textContent = totalViews28d.toLocaleString("en-US");
+        document.getElementById("28rpm").textContent = (rpm28d * 100).toFixed(2);
+    }
+
     function populateToggles(channels) {
         const toggleContainer = document.getElementById("channelToggleContainer");
         toggleContainer.innerHTML = ""; // Clear any existing toggles
