@@ -1,16 +1,16 @@
 // Wait for the document to load
-document.addEventListener("DOMContentLoaded", function () {
+document.addEventListener("DOMContentLoaded", async function () {
   console.log("Script is running");
 
   // Access Memberstack instance via window.$memberstackDom
   const memberstack = window.$memberstackDom;
 
-  // Get the last 5 digits of the logged-in Memberstack user ID
+  // Helper: Return the last 5 digits of a Memberstack user ID.
   function getLastFiveDigits(memberId) {
     return memberId.slice(-5);
   }
 
-  // Function to show/hide cards based on channelXid values
+  // Update card displays based on custom fields.
   function updateCards(member) {
     const customFields = member.customFields;
     let firstEmptyIndex = null;
@@ -52,9 +52,62 @@ document.addEventListener("DOMContentLoaded", function () {
     }
   }
 
-  // Asynchronous function to handle the submit click for linking YouTube channel
+  // Step 1: Validate the YouTube channel using the YouTube Data API.
+  async function validateYouTubeChannelAsync(channelId, memberId) {
+    const lastFive = memberId.slice(-5);
+    const apiKey = 'AIzaSyAsxW-IKPfaolgoSBnH8l4ttqkKRHf2w7o'; // Your API Key
+    const url = `https://www.googleapis.com/youtube/v3/channels?part=snippet&id=${channelId}&key=${apiKey}`;
+
+    console.log(`Fetching YouTube Channel data for validation: ${url}`);
+    const response = await fetch(url);
+    const data = await response.json();
+
+    if (data.items && data.items.length > 0) {
+      const channelInfo = data.items[0].snippet;
+      const channelName = channelInfo.title;
+      const description = channelInfo.description;
+      console.log("Channel name:", channelName);
+      console.log("Channel description:", description);
+
+      if (description.includes(lastFive)) {
+        console.log(`Validation successful! Found last 5 digits: ${lastFive}`);
+        return channelName;
+      } else {
+        throw new Error("Validation failed: The channel's description does not contain your ID.");
+      }
+    } else {
+      throw new Error("Invalid channel ID.");
+    }
+  }
+
+  // Step 2: Check uniqueness by calling the Lambda endpoint.
+  async function checkUniqueness(channelId) {
+    const endpoint = "https://athi9jm2t5.execute-api.us-east-1.amazonaws.com/default/repeat";
+    const payload = JSON.stringify({ body: JSON.stringify({ channelId: channelId }) });
+    
+    console.log("Calling uniqueness endpoint with payload:", payload);
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: payload,
+    });
+    
+    const lambdaResponse = await response.json();
+    console.log("Raw Lambda response:", lambdaResponse);
+
+    // Parse the nested JSON in the 'body' property.
+    let parsed;
+    try {
+      parsed = JSON.parse(lambdaResponse.body);
+      console.log("Parsed uniqueness response:", parsed);
+    } catch (e) {
+      throw new Error("Error processing uniqueness response.");
+    }
+    return parsed;
+  }
+
+  // Step 3: Handle the full flow for linking a YouTube channel.
   async function handleSubmitLinkClick(channelIndex, member) {
-    console.log(`Submit button clicked for channel ${channelIndex}`);
     const inputElement = document.getElementById(`input${channelIndex}`);
     const channelId = inputElement.value.trim();
 
@@ -65,112 +118,40 @@ document.addEventListener("DOMContentLoaded", function () {
       return;
     }
 
-    // First, validate the channel using YouTube Data API.
-    let channelName;
     try {
-      channelName = await validateYouTubeChannelAsync(channelId, member.id);
-      console.log("YouTube channel validated. Channel name:", channelName);
-    } catch (error) {
-      console.error("YouTube channel validation failed:", error);
-      alert(error);
-      return;
-    }
+      // Validate the channel.
+      const channelName = await validateYouTubeChannelAsync(channelId, member.id);
+      console.log("Channel validated. Channel name:", channelName);
 
-    // Now, check uniqueness using the Lambda endpoint.
-    let lambdaResponse;
-    try {
-      const response = await fetch(
-        "https://athi9jm2t5.execute-api.us-east-1.amazonaws.com/default/repeat",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          // The endpoint expects a JSON body like:
-          // { "body": "{\"channelId\": \"YOUR_CHANNEL_ID\"}" }
-          body: JSON.stringify({ body: JSON.stringify({ channelId: channelId }) }),
-        }
-      );
-      lambdaResponse = await response.json();
-      console.log("Raw Lambda response:", lambdaResponse);
-    } catch (error) {
-      console.error("Error calling uniqueness endpoint:", error);
-      alert("Error checking channel uniqueness. Please try again later.");
-      return;
-    }
+      // Check uniqueness.
+      const uniqueness = await checkUniqueness(channelId);
+      if (!(uniqueness.isUnique === true || uniqueness.isUnique === "true")) {
+        console.warn("Uniqueness check failed. Channel is not unique:", uniqueness);
+        alert("Channel ID is already linked to an account. If you think this is a mistake please contact an Admin");
+        return;
+      }
 
-    // Parse the nested JSON returned in the "body" property.
-    let uniqueResponse;
-    try {
-      uniqueResponse = JSON.parse(lambdaResponse.body);
-      console.log("Parsed uniqueness response:", uniqueResponse);
-    } catch (e) {
-      console.error("Failed to parse Lambda response body:", e);
-      alert("Error processing channel uniqueness response.");
-      return;
-    }
+      // Update Memberstack if all checks pass.
+      console.log("Channel is unique. Proceeding with linking.");
+      const channelNameField = `channel${channelIndex}`;
+      const channelIdField = `channel${channelIndex}id`;
 
-    // If the channel is not unique, stop further processing.
-    if (!(uniqueResponse.isUnique === true || uniqueResponse.isUnique === "true")) {
-      console.warn("Uniqueness check failed. Channel is not unique:", uniqueResponse);
-      alert("Channel ID is already linked to an account. If you think this is a mistake please contact an Admin");
-      return; // Stop processing here.
-    }
-
-    // If uniqueness check passes, proceed with updating Memberstack.
-    console.log("Channel ID is unique. Proceeding with linking.");
-    const channelNameField = `channel${channelIndex}`;
-    const channelIdField = `channel${channelIndex}id`;
-
-    try {
       await memberstack.updateMember({
         customFields: {
           [channelIdField]: channelId,
           [channelNameField]: channelName,
         },
       });
+
       alert("YouTube channel successfully linked!");
       location.reload();
     } catch (error) {
-      console.error("Failed to update Memberstack fields:", error.message);
-      alert("Failed to update Memberstack fields: " + error.message);
+      console.error("Error during channel linking:", error);
+      alert(error.message);
     }
   }
 
-  // Helper: Asynchronous version of YouTube channel validation.
-  function validateYouTubeChannelAsync(channelId, memberId) {
-    return new Promise((resolve, reject) => {
-      const lastFive = memberId.slice(-5);
-      const apiKey = 'AIzaSyAsxW-IKPfaolgoSBnH8l4ttqkKRHf2w7o';
-      const url = `https://www.googleapis.com/youtube/v3/channels?part=snippet&id=${channelId}&key=${apiKey}`;
-
-      console.log(`Fetching YouTube Channel data for validation: ${url}`);
-      fetch(url)
-        .then((response) => response.json())
-        .then((data) => {
-          if (data.items && data.items.length > 0) {
-            const channelInfo = data.items[0].snippet;
-            const channelName = channelInfo.title;
-            const description = channelInfo.description;
-            console.log("Channel name:", channelName);
-            console.log("Channel description:", description);
-            if (description.includes(lastFive)) {
-              console.log(`Validation successful! Found last 5 digits: ${lastFive}`);
-              resolve(channelName);
-            } else {
-              console.error("Validation failed: last 5 digits not found in channel description.");
-              reject("Validation failed: The channel's description does not contain your ID.");
-            }
-          } else {
-            reject("Invalid channel ID.");
-          }
-        })
-        .catch((error) => {
-          console.error("Error fetching YouTube channel data:", error);
-          reject("Error fetching the YouTube channel: " + error.message);
-        });
-    });
-  }
-
-  // Set up click listeners for submit buttons
+  // Set up click listeners for each submit button.
   function setupSubmitLinks(member) {
     for (let i = 1; i <= 20; i++) {
       const submitElement = document.getElementById(`submit${i}`);
@@ -181,31 +162,28 @@ document.addEventListener("DOMContentLoaded", function () {
           handleSubmitLinkClick(i, member);
         });
       } else {
-        console.error(`Submit button not found for card${i} during setup`);
+        console.error(`Submit button not found for card${i}`);
       }
     }
   }
 
-  // Initialize Memberstack and set up the UI.
+  // Initialize: get the current member, update the UI, and set up listeners.
   if (memberstack) {
-    console.log("Memberstack is available");
-    memberstack
-      .getCurrentMember()
-      .then(({ data: member }) => {
-        if (member) {
-          console.log("Memberstack user data:", member);
-          const memberId = member.id;
-          const lastFiveElement = document.getElementById("lastFive");
-          if (lastFiveElement) lastFiveElement.textContent = getLastFiveDigits(memberId);
-          updateCards(member);
-          setupSubmitLinks(member);
-        } else {
-          console.error("No member is logged in.");
-        }
-      })
-      .catch((error) => {
-        console.error("Error getting current member:", error);
-      });
+    try {
+      const { data: member } = await memberstack.getCurrentMember();
+      if (member) {
+        console.log("Memberstack user data:", member);
+        const memberId = member.id;
+        const lastFiveElement = document.getElementById("lastFive");
+        if (lastFiveElement) lastFiveElement.textContent = getLastFiveDigits(memberId);
+        updateCards(member);
+        setupSubmitLinks(member);
+      } else {
+        console.error("No member is logged in.");
+      }
+    } catch (error) {
+      console.error("Error getting current member:", error);
+    }
   } else {
     console.error("Memberstack is not available.");
   }
