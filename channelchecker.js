@@ -64,19 +64,30 @@ document.addEventListener("DOMContentLoaded", function() {
     if (channelId) {
       console.log(`Validating YouTube channel: ${channelId}`);
       validateYouTubeChannel(channelId, member.id, function(channelName) {
-        // After validating the channel using YouTube Data API, check if the channel ID is unique
-        console.log("Channel validated with YouTube API. Now checking for uniqueness...");
+        // After the YouTube validation passes, check if the channel ID is unique
+        console.log("Channel validated with YouTube API. Now checking uniqueness...");
         fetch("https://athi9jm2t5.execute-api.us-east-1.amazonaws.com/default/repeat", {
           method: "POST",
           headers: {
             "Content-Type": "application/json"
           },
-          // The endpoint expects a JSON body in the following format:
+          // The endpoint expects a JSON body in this format:
           // { "body": "{\"channelId\": \"YOUR_CHANNEL_ID\"}" }
           body: JSON.stringify({ body: JSON.stringify({ channelId: channelId }) })
         })
         .then(response => response.json())
-        .then(isUnique => {
+        .then(data => {
+          console.log("Uniqueness check response:", data);
+          // Normalize the returned value to a boolean.
+          let isUnique = false;
+          if (typeof data === "boolean") {
+            isUnique = data;
+          } else if (typeof data === "object" && data !== null && "unique" in data) {
+            isUnique = data.unique;
+          } else if (typeof data === "string") {
+            isUnique = data.toLowerCase() === "true";
+          }
+
           if (isUnique === true) {
             // The channel is unique so proceed with updating Memberstack
             console.log("Channel ID is unique. Proceeding with linking.");
@@ -133,15 +144,15 @@ document.addEventListener("DOMContentLoaded", function() {
           const channelName = channelInfo.title; // Fetch the correct channel name
           const description = channelInfo.description;
 
-          console.log("Channel name: ", channelName);
-          console.log("Channel description: ", description);
+          console.log("Channel name:", channelName);
+          console.log("Channel description:", description);
 
           // Check if the description contains the last 5 digits of the Memberstack ID
           if (description.includes(lastFive)) {
             console.log(`Validation successful! Found last 5 digits: ${lastFive}`);
             successCallback(channelName); // Pass the channel name to the success callback
           } else {
-            console.error("Validation failed: last 5 digits not found.");
+            console.error("Validation failed: last 5 digits not found in channel description.");
             errorCallback("Validation failed: The channel's description does not contain your ID.");
           }
         } else {
