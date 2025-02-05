@@ -78,7 +78,6 @@ document.addEventListener("DOMContentLoaded", function() {
         .then(response => response.json())
         .then(data => {
           console.log("Uniqueness check response:", data);
-          // Parse the nested JSON in the "body" property
           let uniqueResponse;
           try {
             uniqueResponse = JSON.parse(data.body);
@@ -87,8 +86,9 @@ document.addEventListener("DOMContentLoaded", function() {
             alert("Error processing channel uniqueness response.");
             return;
           }
-          // Check the isUnique property from the parsed response
-          if (uniqueResponse.isUnique === true) {
+          // Explicitly check for the unique flag.
+          // Make sure that only if uniqueResponse.isUnique is true (or "true") do we continue.
+          if (uniqueResponse.isUnique === true || uniqueResponse.isUnique === "true") {
             console.log("Channel ID is unique. Proceeding with linking.");
             const channelNameField = `channel${channelIndex}`;
             const channelIdField = `channel${channelIndex}id`;
@@ -108,8 +108,10 @@ document.addEventListener("DOMContentLoaded", function() {
               alert("Failed to update Memberstack fields: " + error.message);
             });
           } else {
-            console.warn("Channel ID is not unique.");
+            // If the endpoint returns false (or "false"), do not continue.
+            console.warn("Channel ID is not unique. Aborting the linking process.");
             alert("Channel ID is already linked to an account. If you think this is a mistake please contact an Admin");
+            return;
           }
         })
         .catch(error => {
